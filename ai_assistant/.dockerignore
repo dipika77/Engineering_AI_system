@@ -1,0 +1,12 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+chroma_db/
+models/
+tickets.json
+.git/
+docs/
+README.md

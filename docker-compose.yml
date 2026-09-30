@@ -1,0 +1,72 @@
+# Run these commands from this folder (the one that contains ai_assistant/)
+# Start API + UI:            docker compose up --build
+# Start with local vLLM too: docker compose --profile gpu up --build   (needs NVIDIA GPU)
+
+services:
+  api:
+    build: ./ai_assistant
+    image: acme-ai-assistant:latest
+    container_name: acme-api
+    env_file: ./ai_assistant/.env
+    environment:
+      - CHROMA_DIR=chroma_db
+      - TICKETS_FILE=chroma_db/tickets.json
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/app/chroma_db     # keep the vector DB when the container restarts
+      - ./ai_assistant/data:/app/data:ro            # add your own documents here, then call POST /ingest?reset=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  ui:
+    image: acme-ai-assistant:latest
+    container_name: acme-ui
+    command: ["streamlit", "run", "ui/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+    environment:
+      - API_URL=http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # optional local open-source LLM, used as the last fallback provider
+  # set VLLM_BASE_URL=http://vllm:8000/v1 in ai_assistant/.env when you use this profile
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: acme-vllm
+    profiles: ["gpu"]
+    command:
+      - --model=Qwen/Qwen2.5-1.5B-Instruct
+      - --max-model-len=8192
+      - --gpu-memory-utilization=0.85
+      - --enable-auto-tool-choice
+      - --tool-call-parser=hermes
+    ports:
+      - "8001:8000"
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  chroma_data:
+  hf_cache:

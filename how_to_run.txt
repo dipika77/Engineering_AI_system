@@ -1,0 +1,94 @@
+ACME AI ASSISTANT - HOW TO RUN
+==============================
+
+Folder contents
+---------------
+ai_assistant/        source code, Dockerfile, README.md (full documentation), tests, sample documents
+docker-compose.yml   starts the API + web UI (and optionally a local vLLM model)
+arch_diagram_1.png   Task 1 architecture (RAG + tool calling + structured output + vLLM)
+arch_diagram_2.png   Task 2 architecture (UI, caching, rate limiting, retry, fallback, ONNX, Docker Compose)
+
+
+Requirements
+------------
+- Docker Desktop (with Docker Compose v2), at least 8 GB free disk space
+- A free Groq API key: https://console.groq.com/keys
+- Optional: an NVIDIA GPU machine if you want to run the local vLLM model
+
+
+STEP 1 - Add your API key
+-------------------------
+Run all commands from this folder (the one that contains docker-compose.yml).
+
+    cp ai_assistant/.env.example ai_assistant/.env
+
+Open ai_assistant/.env and set:
+
+    GROQ_API_KEY=gsk_your_key_here
+
+
+STEP 2 - Start the app with Docker Compose
+------------------------------------------
+    docker compose up --build
+
+The first build takes several minutes (it installs PyTorch CPU, downloads the MiniLM
+embedding model and converts it to ONNX). Documents in ai_assistant/data are ingested
+automatically on the first start.
+
+    Web UI:        http://localhost:8501
+    API (Swagger): http://localhost:8000/docs
+    Health check:  http://localhost:8000/health
+
+
+STEP 3 - Try it
+---------------
+In the web UI ask for example:
+    - How many paid leaves do I get per year?
+    - I have used 7 annual leaves, how many are left?        (uses the calculator tool)
+    - My laptop is not booting, please raise a ticket.       (uses the create_support_ticket tool)
+    - What is the price of the Business plan with annual billing?
+Use the "Batch questions" tab to send several questions at once.
+
+Or with curl:
+    curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
+         -d '{"question": "How many paid leaves do I get per year?"}'
+
+
+Useful commands
+---------------
+    docker compose logs -f api                              see logs (retries / fallbacks)
+    docker compose exec api pytest -q                       run unit tests
+    curl -X POST "http://localhost:8000/ingest?reset=true"  re-ingest after adding files to ai_assistant/data
+    docker compose down                                     stop (add -v to also delete the vector DB)
+
+
+OPTIONAL - Local open-source LLM with vLLM (NVIDIA GPU only)
+-----------------------------------------------------------
+1. In ai_assistant/.env set:  VLLM_BASE_URL=http://vllm:8000/v1
+2. Start with the gpu profile:
+       docker compose --profile gpu up --build
+The vLLM model (Qwen2.5-1.5B-Instruct) is used as the last fallback after
+groq/openai/gpt-oss-120b and groq/llama-3.1-8b-instant.
+
+
+OPTIONAL - Run without Docker (Python 3.11 / 3.12)
+--------------------------------------------------
+    cd ai_assistant
+    python -m venv .venv
+    source .venv/bin/activate            (Windows: .venv\Scripts\activate)
+    pip install -r requirements.txt
+    cp .env.example .env                 (then add GROQ_API_KEY)
+
+    python -m app.rag.ingest --reset     build the vector database
+    python -m app.cli                    Task 1: chat in the terminal
+
+    uvicorn app.api:app --port 8000      Task 2: API   (terminal 1)
+    streamlit run ui/streamlit_app.py    Task 2: UI    (terminal 2)
+
+    pytest -q                            unit tests
+    python scripts/export_onnx.py        ONNX export + INT8 quantization
+    python scripts/benchmark_embeddings.py
+    python scripts/load_test.py --requests 20 --concurrency 5
+
+
+More details (design decisions, benchmarks, reliability, cloud deployment): ai_assistant/README.md
